@@ -16,14 +16,33 @@ SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 
 
+
 def create_oauth_flow(state=None):
-    oauth = st.secrets["google_oauth"]
-    redirect_uri = oauth["redirect_uri"]
+    try:
+       oauth = st.secrets["google_oauth"]
+    except Exception:
+       oauth = {}
+    client_id = os.getenv(
+        "GOOGLE_CLIENT_ID",
+        oauth.get("client_id", ""),
+    )
+    client_secret = os.getenv(
+        "GOOGLE_CLIENT_SECRET",
+        oauth.get("client_secret", ""),
+    )
+    redirect_uri = os.getenv(
+        "GOOGLE_REDIRECT_URI",
+        oauth.get("redirect_uri", ""),
+    )
+    
+    client_id = os.getenv("GOOGLE_CLIENT_ID") or oauth.get("client_id", "")
+    client_secret = os.getenv("GOOGLE_CLIENT_SECRET") or oauth.get("client_secret", "")
+    redirect_uri = os.getenv("GOOGLE_REDIRECT_URI") or oauth.get("redirect_uri", "")
 
     client_config = {
         "web": {
-            "client_id": oauth["client_id"],
-            "client_secret": oauth["client_secret"],
+            "client_id": client_id,
+            "client_secret": client_secret,
             "auth_uri": "https://accounts.google.com/o/oauth2/auth",
             "token_uri": "https://oauth2.googleapis.com/token",
             "redirect_uris": [redirect_uri],
@@ -39,8 +58,13 @@ def create_oauth_flow(state=None):
     flow.redirect_uri = redirect_uri
     return flow
 
+
 def create_signed_state():
-    secret = st.secrets["google_oauth"]["state_secret"]
+    secret = os.getenv("OAUTH_STATE_SECRET")
+
+    if not secret:
+        secret = st.secrets["google_oauth"]["state_secret"]
+
     timestamp = str(int(time.time()))
     nonce = secrets.token_urlsafe(24)
 
@@ -54,6 +78,7 @@ def create_signed_state():
     return f"{payload}.{signature}"
 
 
+
 def validate_signed_state(state):
     if not state:
         return False
@@ -62,7 +87,10 @@ def validate_signed_state(state):
         timestamp, nonce, signature = state.split(".", 2)
 
         payload = f"{timestamp}.{nonce}"
-        secret = st.secrets["google_oauth"]["state_secret"]
+        secret = os.getenv("OAUTH_STATE_SECRET")
+
+        if not secret:
+            secret = st.secrets["google_oauth"]["state_secret"]
 
         expected_signature = hmac.new(
             secret.encode("utf-8"),
@@ -76,8 +104,9 @@ def validate_signed_state(state):
         age = int(time.time()) - int(timestamp)
         return 0 <= age <= 600
 
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, KeyError):
         return False
+
 
 
 
