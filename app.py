@@ -2,10 +2,55 @@
 import streamlit as st
 import html
 
+from backend import (
+    complete_authorization,
+    fetch_forms,
+    get_authorization_url,
+    get_credentials,
+)
+
+
 st.set_page_config(
     page_title="Google Forms",
     layout="wide",
 )
+# Handle Google's redirect back to the app.
+
+
+query_params = st.query_params
+
+if query_params.get("code"):
+    try:
+        complete_authorization(
+            code=query_params["code"],
+            returned_state=query_params.get("state", ""),
+        )
+        st.query_params.clear()
+        st.rerun()
+    except Exception as error:
+        st.error(f"Google authorization failed: {error}")
+        st.stop()
+
+# Show the sign-in button if the user isn't connected.
+
+if not get_credentials():
+    if st.button("Connect Google Account"):
+        authorization_url = get_authorization_url()
+        st.markdown(
+            f'<meta http-equiv="refresh" content="0;url={authorization_url}">',
+            unsafe_allow_html=True,
+        )
+
+    st.info("Connect your Google account to view your forms.")
+    st.stop()
+
+
+# The user is connected; continue to your existing form-listing code.
+try:
+    forms = fetch_forms()
+except Exception as error:
+    st.error(f"Could not retrieve Google Forms: {error}")
+    st.stop()
 
 # Page styling
 st.markdown(
@@ -152,40 +197,15 @@ st.subheader("Recent forms")
 # Temporary sample data
 
 
-from backend import connect_google_account, fetch_forms
-
-if st.button("Connect Google Account"):
-    try:
-        connect_google_account()
-        st.rerun()
-    except Exception as error:
-        st.error(f"Google authorization failed: {error}")
-
-if "google_credentials" not in st.session_state:
-    st.info("Connect your Google account to view your forms.")
-    st.stop()
-
-try:
-    google_forms = fetch_forms()
-
-    forms = [
-        {
-            "name": form.get("name", "Untitled form"),
-            "modified": form.get("modifiedTime", ""),
-            "id": form["id"],
-            "link": form.get("webViewLink")
-            or f"https://docs.google.com/forms/d/{form['id']}/edit",
-        }
-        for form in google_forms
-    ]
-
-except Exception as error:
-    st.error(f"Could not retrieve Google Forms: {error}")
-    st.stop()
-
 filtered_forms = [
-    form for form in forms
-    if search_query.lower() in form["name"].lower()
+    {
+        "name": form.get("name", "Untitled form"),
+        "link": form.get("webViewLink", ""),
+        "modified": form.get("modifiedTime", ""),
+    }
+    for form in forms
+    if search_query.lower() in form.get("name", "").lower()
+    and form.get("webViewLink")
 ]
 
 if filtered_forms:
@@ -224,11 +244,5 @@ if filtered_forms:
             """,
             unsafe_allow_html=True,
         )
-
-else:
-    if not forms:
-        st.info("No Google Forms were found in this account.")
-    else:
-        st.info("No forms match your search.")
 
 
