@@ -244,5 +244,16 @@ if filtered_forms:
             """,
             unsafe_allow_html=True,
         )
-
+else:
+    if search_query:
+        st.info("No forms match your search. Try a different name.")
+    else:
+        st.info(
+            "No Google Forms found. Create a form in Google Forms, "
+            "then refresh this page."
+        )
+        st.link_button(
+            "Open Google Forms",
+            "https://forms.google.com",
+        )
 
