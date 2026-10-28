@@ -1,12 +1,23 @@
 
 import streamlit as st
 import html
-
+import os
+import streamlit.components.v1 as components
 from backend import (
     complete_authorization,
     fetch_forms,
+    fetch_form_responses,
+    save_responses_to_json,
     get_authorization_url,
     get_credentials,
+    fetch_form_questions,
+)
+clickable_cards = components.declare_component(
+    "clickable_cards",
+    path=os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "clickable_card",
+    ),
 )
 
 
@@ -14,8 +25,8 @@ st.set_page_config(
     page_title="Google Forms",
     layout="wide",
 )
+selected_form_id = st.session_state.get("selected_form_id")
 # Handle Google's redirect back to the app.
-
 
 query_params = st.query_params
 
@@ -51,6 +62,110 @@ try:
 except Exception as error:
     st.error(f"Could not retrieve Google Forms: {error}")
     st.stop()
+
+
+
+
+if selected_form_id:
+    selected_form = next(
+        (
+            form for form in forms
+            if form.get("id") == selected_form_id
+        ),
+        None,
+    )
+
+    if not selected_form:
+        st.error("The selected form was not found.")
+        st.stop()
+
+    try:
+        responses = fetch_form_responses(selected_form_id)
+
+        json_path = save_responses_to_json(
+            form_id=selected_form_id,
+            form_name=selected_form.get("name", "Untitled form"),
+            responses=responses,
+        )
+
+        st.title(selected_form.get("name", "Untitled form"))
+        st.success("Responses saved to JSON successfully.")
+        st.write(f"Total responses: {len(responses)}")
+
+        # Convert responses into rows for the UI grid
+        table_rows = []
+
+        questions = fetch_form_questions(selected_form_id)
+
+        
+        table_rows = []
+        questions = fetch_form_questions(selected_form_id)
+
+        for response in responses:
+            row = {
+                "Response ID": response.get("responseId", ""),
+                "Submitted at": response.get("lastSubmittedTime", ""),
+            }
+
+            for question_id, answer_data in response.get("answers", {}).items():
+                question_title = questions.get(question_id, question_id)
+
+                # Handle uploaded files, such as resumes
+                uploaded_files = answer_data.get(
+                    "fileUploadAnswers", {}
+                ).get("answers", [])
+
+                if uploaded_files:
+                    for index, uploaded_file in enumerate(uploaded_files, start=1):
+                        file_id = uploaded_file.get("fileId", "")
+                        if file_id:
+                            row[f"{question_title} ({index})"] = (
+                                f"https://drive.google.com/file/d/{file_id}/view"
+                            )
+                else:
+                    # Handle normal text answers
+                    values = [
+                        answer.get("value", "")
+                        for answer in answer_data.get(
+                            "textAnswers", {}
+                        ).get("answers", [])
+                    ]
+                    row[question_title] = ", ".join(values)
+
+            table_rows.append(row)
+
+        if table_rows:
+            st.subheader("Form responses")
+
+            # Make Google Drive file URLs clickable
+            column_config = {}
+            for column in table_rows[0].keys():
+                if any(
+                    str(item.get(column, "")).startswith(
+                        "https://drive.google.com/file/d/"
+                    )
+                    for item in table_rows
+                ):
+                    column_config[column] = st.column_config.LinkColumn(
+                        column,
+                        display_text="View file",
+                    )
+
+            st.dataframe(
+                table_rows,
+                column_config=column_config,
+                use_container_width=True,
+                hide_index=True,
+            )
+        else:
+            st.info("No responses have been submitted to this form yet.")
+
+    except Exception as error:
+        st.error(f"Could not fetch or save responses: {error}")
+        st.stop()
+
+    st.stop()
+
 
 # Page styling
 st.markdown(
@@ -104,6 +219,8 @@ div[data-testid="stTextInput"] input::placeholder {
     width: 100%;
     max-width:280px;
     height: 250px;
+    position: relative;
+    cursor:pointer;
     box-sizing: border-box;
     border: 1px solid #dadce0;
     border-radius: 8px;
@@ -183,7 +300,9 @@ div[data-testid="stTextInput"] input::placeholder {
 )
 
 # Page heading
-st.title("Google Forms")
+# Show the form list only when no form is selected.
+if not selected_form_id:
+    st.title("Google Forms")
 
 # Search bar
 search_query = st.text_input(
@@ -199,6 +318,7 @@ st.subheader("Recent forms")
 
 filtered_forms = [
     {
+        "id": form.get("id", ""),
         "name": form.get("name", "Untitled form"),
         "link": form.get("webViewLink", ""),
         "modified": form.get("modifiedTime", ""),
@@ -208,42 +328,22 @@ filtered_forms = [
     and form.get("webViewLink")
 ]
 
+if "selected_form" not in st.session_state:
+    st.session_state.selected_form = None
+
+
+
+
 if filtered_forms:
-    columns_per_row = 4
+    selected_form_id = clickable_cards(
+        forms=filtered_forms,
+        key="google_forms_cards",
+    )
 
-    for start in range(0, len(filtered_forms), columns_per_row):
-        row_forms = filtered_forms[start:start + columns_per_row]
-        columns = st.columns(columns_per_row, gap="small")
+    if selected_form_id:
+        st.session_state["selected_form_id"] = selected_form_id
+        st.rerun()
 
-        for col, form in zip(columns, row_forms):
-            with col:
-                safe_name = html.escape(form["name"])
-                safe_modified = html.escape(form["modified"])
-                safe_link = html.escape(form["link"], quote=True)
-
-                
-                st.markdown(
-            f"""
-            <a href="{safe_link}"
-               target="_blank"
-               style="text-decoration:none;color:inherit;display:block;">
-                <div class="form-card">
-                    <div class="form-preview">
-                        <div class="form-preview-icon">
-                            <span></span>
-                            <span></span>
-                            <span></span>
-                        </div>
-                    </div>
-                    <div class="form-details">
-                        <div class="form-name">{safe_name}</div>
-                        <div class="form-meta">{safe_modified}</div>
-                    </div>
-                </div>
-            </a>
-            """,
-            unsafe_allow_html=True,
-        )
 else:
     if search_query:
         st.info("No forms match your search. Try a different name.")
@@ -252,8 +352,4 @@ else:
             "No Google Forms found. Create a form in Google Forms, "
             "then refresh this page."
         )
-        st.link_button(
-            "Open Google Forms",
-            "https://forms.google.com",
-        )
-
+        st.link_button("Open Google Forms", "https://forms.google.com")

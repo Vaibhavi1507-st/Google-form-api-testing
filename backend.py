@@ -4,15 +4,18 @@ import secrets
 import time
 import os
 import streamlit as st
-
+import json
+from datetime import datetime, timezone
 from google.auth.transport.requests import Request
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import Flow
 from googleapiclient.discovery import build
 
 
-SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
-
+SCOPES = [
+    "https://www.googleapis.com/auth/drive.readonly",
+    "https://www.googleapis.com/auth/forms.responses.readonly",
+]
 
 
 
@@ -139,11 +142,15 @@ def complete_authorization(code, returned_state):
     st.session_state["google_credentials"] = flow.credentials
 
 
+
 def get_credentials():
     credentials = st.session_state.get("google_credentials")
 
+    print(": Credentials found:", credentials is not None)
+
     if not credentials:
         return None
+
 
     if credentials.expired and credentials.refresh_token:
         credentials.refresh(Request())
@@ -154,6 +161,7 @@ def get_credentials():
         return None
 
     return credentials
+
 
 
 def fetch_forms():
@@ -187,3 +195,91 @@ def fetch_forms():
             break
 
     return forms
+
+def fetch_form_responses(form_id):
+    credentials = get_credentials()
+
+    if not credentials:
+        return []
+
+    forms_service = build(
+        "forms",
+        "v1",
+        credentials=credentials,
+    )
+
+    results = forms_service.forms().responses().list(
+        formId=form_id,
+    ).execute()
+
+    return results.get("responses", [])
+
+
+
+def save_responses_to_json(form_id, form_name, responses):
+    questions = fetch_form_questions(form_id)
+
+    os.makedirs("data", exist_ok=True)
+    simplified_responses = []
+
+    for response in responses:
+        answers = {}
+
+        for question_id, answer_data in response.get("answers", {}).items():
+            question_title = questions.get(question_id, question_id)
+
+            values = [
+                answer.get("value", "")
+                for answer in answer_data.get("textAnswers", {}).get("answers", [])
+            ]
+
+            answers[question_title] = ", ".join(values)
+
+        simplified_responses.append({
+            "response_id": response.get("responseId"),
+            "submitted_at": response.get("lastSubmittedTime"),
+            "answers": answers
+        })
+
+    data = {
+        "form_id": form_id,
+        "form_name": form_name,
+        "responses": simplified_responses
+    }
+
+    file_path = os.path.join("data", f"responses_{form_id}.json")
+
+    with open(file_path, "w", encoding="utf-8") as file:
+        json.dump(data, file, indent=4, ensure_ascii=False)
+
+    return file_path
+
+def fetch_form_questions(form_id):
+    credentials = get_credentials()
+
+    if not credentials:
+        return {}
+
+    forms_service = build(
+        "forms",
+        "v1",
+        credentials=credentials,
+    )
+
+    form = forms_service.forms().get(
+        formId=form_id
+    ).execute()
+
+    questions = {}
+
+    for item in form.get("items", []):
+        question_item = item.get("questionItem", {})
+        question = question_item.get("question", {})
+        question_id = question.get("questionId")
+
+        if question_id:
+            questions[question_id] = item.get(
+                "title", "Untitled question"
+            )
+
+    return questions
